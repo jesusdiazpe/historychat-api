@@ -1,0 +1,138 @@
+const express = require("express");
+const cors = require("cors");
+const path = require("path");
+const Database = require("better-sqlite3");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+const db = new Database(path.join(__dirname, "../data/chat.db"));
+
+app.use(cors());
+app.use(express.json());
+
+app.get("/api/search", (req, res) => {
+  const q = String(req.query.q || "").trim();
+  const offset = Number(req.query.offset || 0);
+  const limit = Number(req.query.limit || 50);
+
+  if (!q) {
+    return res.json([]);
+  }
+
+  const rows = db.prepare(`
+    SELECT 
+      m.id,
+      m.sender_name_fixed AS sender_name,
+      m.date,
+      m.year,
+      m.content_fixed AS content,
+      m.type,
+      m.media_uri,
+      m.source_file
+    FROM messages_fts fts
+    JOIN messages m ON m.id = fts.rowid
+    WHERE messages_fts MATCH ?
+    ORDER BY m.timestamp_ms ASC
+    LIMIT ?
+    OFFSET ?
+  `).all(q, limit, offset);
+
+  res.json(rows);
+});
+
+app.get("/api/messages", (req, res) => {
+  const year = req.query.year;
+
+  let rows;
+
+  if (year) {
+    rows = db.prepare(`
+      SELECT 
+        id,
+        sender_name_fixed AS sender_name,
+        date,
+        year,
+        content_fixed AS content,
+        type,
+        media_uri
+      FROM messages
+      WHERE year = ?
+      ORDER BY timestamp_ms ASC
+      LIMIT 500
+    `).all(year);
+  } else {
+    rows = db.prepare(`
+      SELECT 
+        id,
+        sender_name_fixed AS sender_name,
+        date,
+        year,
+        content_fixed AS content,
+        type,
+        media_uri
+      FROM messages
+      ORDER BY timestamp_ms ASC
+      LIMIT 500
+    `).all();
+  }
+
+  res.json(rows);
+});
+
+app.get("/api/context/:id", (req, res) => {
+  const id = Number(req.params.id);
+
+  const message = db.prepare(`
+    SELECT timestamp_ms FROM messages WHERE id = ?
+  `).get(id);
+
+  if (!message) {
+    return res.status(404).json({ error: "Mensaje no encontrado" });
+  }
+
+  const rows = db.prepare(`
+    SELECT 
+      id,
+      sender_name_fixed AS sender_name,
+      date,
+      content_fixed AS content,
+      type,
+      media_uri
+    FROM messages
+    WHERE timestamp_ms BETWEEN ? AND ?
+    ORDER BY timestamp_ms ASC
+  `).all(
+    message.timestamp_ms - 1000 * 60 * 30,
+    message.timestamp_ms + 1000 * 60 * 30
+  );
+
+  res.json(rows);
+});
+
+app.get("/api/stats", (req, res) => {
+  const total = db.prepare(`SELECT COUNT(*) AS total FROM messages`).get();
+  const years = db.prepare(`
+    SELECT year, COUNT(*) AS total
+    FROM messages
+    GROUP BY year
+    ORDER BY year ASC
+  `).all();
+
+  const types = db.prepare(`
+    SELECT type, COUNT(*) AS total
+    FROM messages
+    GROUP BY type
+    ORDER BY total DESC
+  `).all();
+
+  res.json({
+    totalMessages: total.total,
+    years,
+    types
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`API lista en http://localhost:${PORT}`);
+});
