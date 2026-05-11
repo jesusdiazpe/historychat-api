@@ -2,4 +2,3 @@ node_modules
 .env
 npm-debug.log
 data/chat.db
-data/raw/
